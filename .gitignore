@@ -1,0 +1,8 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+inst/app/data/config_s3_location.rds
+inst/app/data/config_s3_access.rds
+inst/dev.R
+logs/

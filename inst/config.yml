@@ -1,0 +1,7 @@
+default:
+  vault:
+    source: local
+    local_path: C:/R/obsidian_notes
+    s3_bucket: avnumbers
+    s3_prefix: obsidian_notes
+    rclone_remote: obsidian

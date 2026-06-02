@@ -1,0 +1,32 @@
+Package: obsidianR
+Type: Package
+Title: Vault Explorer — Lecture et parsing du vault Obsidian
+Version: 0.1.0
+Authors@R: c(
+    person(
+      "Hugo", "Lepage",
+      email = "hugo@avnumbers.com",
+      role = c("aut", "cre")
+    )
+  )
+Description: Package core pour lire, parser et explorer un vault Obsidian
+    (fichiers Markdown + frontmatter YAML). Agnostique public/privé — les apps
+    Shiny qui l'importent décident quoi exposer et à qui. Supporte les sources
+    locale et S3 (OVH) via config.yml.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: false
+Imports:
+    yaml,
+    stringr,
+    dplyr,
+    purrr,
+    fs,
+    leaflet,
+    shiny,
+    commonmark,
+    bslib,
+    s3db (>= 0.1.0)
+Config/roxygen2/version: 8.0.0
+Remotes:  
+    hugo-lep/s3db
