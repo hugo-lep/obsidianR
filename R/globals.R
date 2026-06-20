@@ -7,5 +7,5 @@ utils::globalVariables(c(
   # read_highlights
   "country", "geo", "lat", "lng",
   # mod_itinerary_server
-  ".data", "is_hotel", "tags"
+  ".data", "is_hotel", "is_aeroport", "tags"
 ))

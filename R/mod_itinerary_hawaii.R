@@ -22,6 +22,29 @@
   any(stringr::str_detect(as.character(unlist(tags)), "hébergement"))
 }
 
+#' Vrai si le stem du fichier contient "aeroport" (sans accent)
+#' @noRd
+.it_is_aeroport <- function(stem) {
+  stringr::str_detect(tolower(stem), "aeroport")
+}
+
+#' Formater les titres de sections avec dates en "MM/JJ — titre"
+#' Ex. : "27 juil. — Arrivée" → "07/27 — Arrivée"
+#' @noRd
+.it_date_heading <- function(headings) {
+  purrr::map_chr(headings, function(h) {
+    if      (stringr::str_detect(h, "juil\\.")) mo <- "07"
+    else if (stringr::str_detect(h, "août")) mo <- "08"
+    else if (stringr::str_detect(h, "juin"))    mo <- "06"
+    else if (stringr::str_detect(h, "mai"))     mo <- "05"
+    else return(h)
+    day  <- stringr::str_extract(h, "^\\d+")
+    rest <- stringr::str_replace(h, "^\\d+(er)?\\s+\\S+\\s+—\\s+", "")
+    paste0(mo, "/", sprintf("%02d", as.integer(day)), " — ", trimws(rest))
+  })
+}
+
+
 #' Rendre un body Markdown Obsidian en HTML
 #'
 #' Pipeline :
@@ -88,6 +111,32 @@
   )
 
   html
+}
+
+#' Découper un body Markdown en intro (avant ###) et sections nommées
+#'
+#' @return list(intro = character, sections = named list of character)
+#' @noRd
+.it_split_body <- function(body) {
+  lines       <- strsplit(body, "\n")[[1]]
+  heading_idx <- which(stringr::str_starts(lines, "### "))
+
+  if (length(heading_idx) == 0) return(list(intro = body, sections = list()))
+
+  intro <- if (heading_idx[1] > 1) {
+    paste(lines[seq_len(heading_idx[1] - 1)], collapse = "\n")
+  } else {
+    ""
+  }
+
+  sections <- list()
+  for (i in seq_along(heading_idx)) {
+    start   <- heading_idx[i]
+    end     <- if (i < length(heading_idx)) heading_idx[i + 1] - 1 else length(lines)
+    heading <- stringr::str_remove(lines[start], "^### ")
+    sections[[heading]] <- paste(lines[start:end], collapse = "\n")
+  }
+  list(intro = intro, sections = sections)
 }
 
 # ── Constantes UI (CSS / JS / icônes) ────────────────────────────────────────
@@ -170,14 +219,23 @@ Shiny.addCustomMessageHandler('it_sidebar_close', function(msg) {
     if (btn) btn.click();
   }
 });
+
+/* Redimensionne la carte leaflet (height = '220px' | '420px', etc.) */
+Shiny.addCustomMessageHandler('it_map_resize', function(msg) {
+  var el = document.getElementById(msg.id);
+  if (!el) return;
+  el.style.height = msg.height;
+  setTimeout(function() { window.dispatchEvent(new Event('resize')); }, 60);
+});
 ")
 }
 
 #' @noRd
 .it_icons <- leaflet::awesomeIconList(
-  selected    = leaflet::makeAwesomeIcon("map-marker", library = "fa", markerColor = "blue",   iconColor = "white"),
-  day_point   = leaflet::makeAwesomeIcon("map-marker", library = "fa", markerColor = "red",    iconColor = "white"),
-  hotel       = leaflet::makeAwesomeIcon("bed",        library = "fa", markerColor = "orange", iconColor = "white"),
+  selected    = leaflet::makeAwesomeIcon("map-marker", library = "fa", markerColor = "blue",      iconColor = "white"),
+  day_point   = leaflet::makeAwesomeIcon("map-marker", library = "fa", markerColor = "red",       iconColor = "white"),
+  hotel       = leaflet::makeAwesomeIcon("bed",        library = "fa", markerColor = "orange",    iconColor = "white"),
+  aeroport    = leaflet::makeAwesomeIcon("plane",      library = "fa", markerColor = "cadetblue", iconColor = "white"),
   point_unsel = leaflet::makeAwesomeIcon("map-marker", library = "fa", markerColor = "gray",   iconColor = "white")
 )
 
@@ -223,7 +281,16 @@ mod_itinerary_ui <- function(id) {
         ),
         shiny::div(
           class = "it-map-section",
-          shiny::hr(class = "mb-1 mt-0"),
+          shiny::div(
+            class = "d-flex align-items-center gap-2 mb-1",
+            shiny::hr(class = "mt-0 mb-0 flex-grow-1"),
+            shiny::actionLink(
+              ns("expand_map"),
+              shiny::icon("expand"),
+              class = "text-muted",
+              style = "font-size:0.75rem; line-height:1;"
+            )
+          ),
           leaflet::leafletOutput(ns("hl_map"), height = "220px")
         )
       ),
@@ -232,12 +299,30 @@ mod_itinerary_ui <- function(id) {
         id = ns("tabs"),
         bslib::nav_panel(title = "\U0001f3dd️ Hawaii",    value = "hawaii",
                          shiny::div(class = "it-body", shiny::uiOutput(ns("tab_hawaii")))),
-        bslib::nav_panel(title = "\U0001f3d9️ Oahu",      value = "oahu",
-                         shiny::div(class = "it-body", shiny::uiOutput(ns("tab_oahu")))),
-        bslib::nav_panel(title = "\U0001f30b Big Island",      value = "bigisland",
-                         shiny::div(class = "it-body", shiny::uiOutput(ns("tab_bigisland")))),
-        bslib::nav_panel(title = "\U0001f33f Kauaʿi",     value = "kauai",
-                         shiny::div(class = "it-body", shiny::uiOutput(ns("tab_kauai"))))
+        bslib::nav_panel(title = "\U0001f3d9️ Oahu", value = "oahu",
+          shiny::div(
+            class = "it-body",
+            shiny::uiOutput(ns("tab_oahu_intro")),
+            shiny::uiOutput(ns("tab_oahu_picker")),
+            shiny::uiOutput(ns("tab_oahu_section"))
+          )
+        ),
+        bslib::nav_panel(title = "\U0001f30b Big Island", value = "bigisland",
+          shiny::div(
+            class = "it-body",
+            shiny::uiOutput(ns("tab_bigisland_intro")),
+            shiny::uiOutput(ns("tab_bigisland_picker")),
+            shiny::uiOutput(ns("tab_bigisland_section"))
+          )
+        ),
+        bslib::nav_panel(title = "\U0001f33f Kauaʿi", value = "kauai",
+          shiny::div(
+            class = "it-body",
+            shiny::uiOutput(ns("tab_kauai_intro")),
+            shiny::uiOutput(ns("tab_kauai_picker")),
+            shiny::uiOutput(ns("tab_kauai_section"))
+          )
+        )
       )
     )        # fin layout_sidebar
     )        # fin div#it_layout
@@ -312,13 +397,69 @@ mod_itinerary_server <- function(id, voyage_data) {
     }
 
     # ── Onglets ────────────────────────────────────────────────────────────────
-    output$tab_hawaii    <- shiny::renderUI(.render_tab("hawaii"))
-    output$tab_oahu      <- shiny::renderUI(.render_tab("oahu"))
-    output$tab_bigisland <- shiny::renderUI(.render_tab("bigisland"))
-    output$tab_kauai     <- shiny::renderUI(.render_tab("kauai"))
+    output$tab_hawaii <- shiny::renderUI(.render_tab("hawaii"))
+
+    # ── Oahu : intro + sélecteur de journée (dates MM/JJ) ─────────────────────
+    split_oahu <- shiny::reactive(.it_split_body(vd()$itineraires[["oahu"]]))
+
+    output$tab_oahu_intro <- shiny::renderUI({
+      shiny::HTML(.it_render_body(split_oahu()$intro, img_dir, img_prefix, vd()$s3_attach_prefix))
+    })
+    output$tab_oahu_picker <- shiny::renderUI({
+      choices_raw <- names(split_oahu()$sections)
+      shiny::req(length(choices_raw) > 0)
+      # Valeur = heading original, label affiché = date formatée
+      choices <- stats::setNames(choices_raw, .it_date_heading(choices_raw))
+      shiny::selectInput(ns("sel_oahu"), label = "Journée :", choices = choices, width = "100%")
+    })
+    output$tab_oahu_section <- shiny::renderUI({
+      shiny::req(input$sel_oahu)
+      shiny::HTML(.it_render_body(
+        split_oahu()$sections[[input$sel_oahu]],
+        img_dir, img_prefix, vd()$s3_attach_prefix
+      ))
+    })
+
+    # ── Big Island : intro + sélecteur de journée ─────────────────────────────
+    split_big <- shiny::reactive(.it_split_body(vd()$itineraires[["bigisland"]]))
+
+    output$tab_bigisland_intro <- shiny::renderUI({
+      shiny::HTML(.it_render_body(split_big()$intro, img_dir, img_prefix, vd()$s3_attach_prefix))
+    })
+    output$tab_bigisland_picker <- shiny::renderUI({
+      choices <- names(split_big()$sections)
+      shiny::req(length(choices) > 0)
+      shiny::selectInput(ns("sel_bigisland"), label = "Journée :", choices = choices, width = "100%")
+    })
+    output$tab_bigisland_section <- shiny::renderUI({
+      shiny::req(input$sel_bigisland)
+      shiny::HTML(.it_render_body(
+        split_big()$sections[[input$sel_bigisland]],
+        img_dir, img_prefix, vd()$s3_attach_prefix
+      ))
+    })
+
+    # ── Kauai : intro + sélecteur de journée ──────────────────────────────────
+    split_kauai <- shiny::reactive(.it_split_body(vd()$itineraires[["kauai"]]))
+
+    output$tab_kauai_intro <- shiny::renderUI({
+      shiny::HTML(.it_render_body(split_kauai()$intro, img_dir, img_prefix, vd()$s3_attach_prefix))
+    })
+    output$tab_kauai_picker <- shiny::renderUI({
+      choices <- names(split_kauai()$sections)
+      shiny::req(length(choices) > 0)
+      shiny::selectInput(ns("sel_kauai"), label = "Journée :", choices = choices, width = "100%")
+    })
+    output$tab_kauai_section <- shiny::renderUI({
+      shiny::req(input$sel_kauai)
+      shiny::HTML(.it_render_body(
+        split_kauai()$sections[[input$sel_kauai]],
+        img_dir, img_prefix, vd()$s3_attach_prefix
+      ))
+    })
 
     # ── État ───────────────────────────────────────────────────────────────────
-    rv <- shiny::reactiveValues(selected_stem = NULL)
+    rv <- shiny::reactiveValues(selected_stem = NULL, map_expanded = FALSE)
 
     # ── Carte de base ──────────────────────────────────────────────────────────
     output$hl_map <- leaflet::renderLeaflet({
@@ -338,25 +479,37 @@ mod_itinerary_server <- function(id, voyage_data) {
 
       if (is.null(df) || nrow(df) == 0) return()
 
-      df <- dplyr::mutate(df, is_hotel = purrr::map_lgl(tags, .it_is_hebergement))
+      df <- dplyr::mutate(df,
+        is_hotel    = purrr::map_lgl(tags, .it_is_hebergement),
+        is_aeroport = .it_is_aeroport(.data$stem)
+      )
 
       stem_to_sec <- vd()$stem_to_section[[tab]]
 
       df_show <- if (!is.null(sel) && sel %in% names(stem_to_sec)) {
         day_stems <- vd()$sections[[tab]][[stem_to_sec[[sel]]]]
         df |>
-          dplyr::filter(.data$stem %in% day_stems | is_hotel) |>
+          dplyr::filter(.data$stem %in% day_stems | is_hotel | is_aeroport) |>
           dplyr::mutate(icon_key = dplyr::case_when(
+            is_aeroport         ~ "aeroport",
             .data$stem %in% sel ~ "selected",
             is_hotel            ~ "hotel",
             TRUE                ~ "day_point"
           ))
       } else if (!is.null(sel)) {
         df |>
-          dplyr::filter(.data$stem %in% sel | is_hotel) |>
-          dplyr::mutate(icon_key = ifelse(.data$stem %in% sel, "selected", "hotel"))
+          dplyr::filter(.data$stem %in% sel | is_hotel | is_aeroport) |>
+          dplyr::mutate(icon_key = dplyr::case_when(
+            is_aeroport         ~ "aeroport",
+            .data$stem %in% sel ~ "selected",
+            TRUE                ~ "hotel"
+          ))
       } else {
-        dplyr::mutate(df, icon_key = ifelse(is_hotel, "hotel", "point_unsel"))
+        dplyr::mutate(df, icon_key = dplyr::case_when(
+          is_aeroport ~ "aeroport",
+          is_hotel    ~ "hotel",
+          TRUE        ~ "point_unsel"
+        ))
       }
 
       if (nrow(df_show) == 0) return()
@@ -400,6 +553,13 @@ mod_itinerary_server <- function(id, voyage_data) {
     # -- Fermeture sidebar --
     shiny::observeEvent(input$close_sidebar, {
       session$sendCustomMessage("it_sidebar_close", list(id = ns("it_layout")))
+    })
+
+    # ── Agrandissement carte ───────────────────────────────────────────────────
+    shiny::observeEvent(input$expand_map, {
+      rv$map_expanded <- !rv$map_expanded
+      height <- if (rv$map_expanded) "420px" else "220px"
+      session$sendCustomMessage("it_map_resize", list(id = ns("hl_map"), height = height))
     })
 
     # ── Nettoyage fin de session ───────────────────────────────────────────────

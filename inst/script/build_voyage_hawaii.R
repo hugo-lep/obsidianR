@@ -163,5 +163,6 @@ voyage_data <- list(
 
 message("☁️  Sauvegarde sur S3 : ", S3_OUTPUT)
 s3saveRDS_HL(voyage_data, S3_OUTPUT)
+s3readRDS_HL(S3_OUTPUT)
 message("✅ Build terminé — ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
 
