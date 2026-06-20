@@ -56,11 +56,13 @@
 #' @param img_dir        Dossier local où stocker les images téléchargées (NULL = ignorer)
 #' @param img_url_prefix Préfixe URL pour servir les images locales (NULL = ignorer)
 #' @param s3_prefix      Clé S3 de base des pièces jointes (sans main_folder)
+#' @param base_path      Préfixe du chemin de l'app (ex: "/hawaii" derrière un reverse proxy)
 #' @noRd
 .it_render_body <- function(body,
                              img_dir        = NULL,
                              img_url_prefix = NULL,
-                             s3_prefix      = NULL) {
+                             s3_prefix      = NULL,
+                             base_path      = "") {
 
   html <- commonmark::markdown_html(body, extensions = TRUE, hardbreaks = TRUE)
 
@@ -87,7 +89,7 @@
     html <- stringr::str_replace_all(
       html,
       "!\\[\\[([^|\\]]+)(?:\\|[^\\]]*)?\\]\\]",
-      paste0('<img src="/', img_url_prefix, '/\\1"',
+      paste0('<img src="', base_path, '/', img_url_prefix, '/\\1"',
              ' style="max-width:100%;border-radius:4px;margin:8px 0;">')
     )
 
@@ -351,11 +353,12 @@ mod_itinerary_server <- function(id, voyage_data) {
     img_prefix <- paste0("it_img_", session$token)
     dir.create(img_dir, recursive = TRUE, showWarnings = FALSE)
     shiny::addResourcePath(img_prefix, img_dir)
+    app_base <- sub("/$", "", isolate(session$clientData$url_pathname))
 
     # ── Rendu d'un onglet ──────────────────────────────────────────────────────
     .render_tab <- function(tab_key) {
       body <- vd()$itineraires[[tab_key]]
-      shiny::HTML(.it_render_body(body, img_dir, img_prefix, vd()$s3_attach_prefix))
+      shiny::HTML(.it_render_body(body, img_dir, img_prefix, vd()$s3_attach_prefix, app_base))
     }
 
     # ── Résolution d'un wikilink cliqué ───────────────────────────────────────
@@ -367,7 +370,7 @@ mod_itinerary_server <- function(id, voyage_data) {
       if (nrow(hl) > 0) {
         return(list(
           title = hl$title[[1]],
-          html  = .it_render_body(hl$body[[1]], img_dir, img_prefix, vd()$s3_attach_prefix),
+          html  = .it_render_body(hl$body[[1]], img_dir, img_prefix, vd()$s3_attach_prefix, app_base),
           lat   = hl$lat[[1]],
           lng   = hl$lng[[1]]
         ))
@@ -380,7 +383,7 @@ mod_itinerary_server <- function(id, voyage_data) {
         body    <- vd()$itineraires[[tab_key]]
         return(list(
           title = stem,
-          html  = .it_render_body(body, img_dir, img_prefix, vd()$s3_attach_prefix),
+          html  = .it_render_body(body, img_dir, img_prefix, vd()$s3_attach_prefix, app_base),
           lat   = NA_real_,
           lng   = NA_real_
         ))
@@ -403,7 +406,7 @@ mod_itinerary_server <- function(id, voyage_data) {
     split_oahu <- shiny::reactive(.it_split_body(vd()$itineraires[["oahu"]]))
 
     output$tab_oahu_intro <- shiny::renderUI({
-      shiny::HTML(.it_render_body(split_oahu()$intro, img_dir, img_prefix, vd()$s3_attach_prefix))
+      shiny::HTML(.it_render_body(split_oahu()$intro, img_dir, img_prefix, vd()$s3_attach_prefix, app_base))
     })
     output$tab_oahu_picker <- shiny::renderUI({
       choices_raw <- names(split_oahu()$sections)
@@ -416,7 +419,7 @@ mod_itinerary_server <- function(id, voyage_data) {
       shiny::req(input$sel_oahu)
       shiny::HTML(.it_render_body(
         split_oahu()$sections[[input$sel_oahu]],
-        img_dir, img_prefix, vd()$s3_attach_prefix
+        img_dir, img_prefix, vd()$s3_attach_prefix, app_base
       ))
     })
 
@@ -424,7 +427,7 @@ mod_itinerary_server <- function(id, voyage_data) {
     split_big <- shiny::reactive(.it_split_body(vd()$itineraires[["bigisland"]]))
 
     output$tab_bigisland_intro <- shiny::renderUI({
-      shiny::HTML(.it_render_body(split_big()$intro, img_dir, img_prefix, vd()$s3_attach_prefix))
+      shiny::HTML(.it_render_body(split_big()$intro, img_dir, img_prefix, vd()$s3_attach_prefix, app_base))
     })
     output$tab_bigisland_picker <- shiny::renderUI({
       choices <- names(split_big()$sections)
@@ -435,7 +438,7 @@ mod_itinerary_server <- function(id, voyage_data) {
       shiny::req(input$sel_bigisland)
       shiny::HTML(.it_render_body(
         split_big()$sections[[input$sel_bigisland]],
-        img_dir, img_prefix, vd()$s3_attach_prefix
+        img_dir, img_prefix, vd()$s3_attach_prefix, app_base
       ))
     })
 
@@ -443,7 +446,7 @@ mod_itinerary_server <- function(id, voyage_data) {
     split_kauai <- shiny::reactive(.it_split_body(vd()$itineraires[["kauai"]]))
 
     output$tab_kauai_intro <- shiny::renderUI({
-      shiny::HTML(.it_render_body(split_kauai()$intro, img_dir, img_prefix, vd()$s3_attach_prefix))
+      shiny::HTML(.it_render_body(split_kauai()$intro, img_dir, img_prefix, vd()$s3_attach_prefix, app_base))
     })
     output$tab_kauai_picker <- shiny::renderUI({
       choices <- names(split_kauai()$sections)
@@ -454,7 +457,7 @@ mod_itinerary_server <- function(id, voyage_data) {
       shiny::req(input$sel_kauai)
       shiny::HTML(.it_render_body(
         split_kauai()$sections[[input$sel_kauai]],
-        img_dir, img_prefix, vd()$s3_attach_prefix
+        img_dir, img_prefix, vd()$s3_attach_prefix, app_base
       ))
     })
 
