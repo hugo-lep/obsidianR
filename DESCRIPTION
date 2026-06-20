@@ -28,5 +28,7 @@ Imports:
     bslib,
     s3db (>= 0.1.0)
 Config/roxygen2/version: 8.0.0
-Remotes:  
+Remotes: 
     hugo-lep/s3db
+URL: https://github.com/hugo-lep/obsidianR
+BugReports: https://github.com/hugo-lep/obsidianR/issues
