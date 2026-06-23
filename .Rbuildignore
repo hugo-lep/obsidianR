@@ -5,3 +5,4 @@
 ^CLAUDE\.md$
 ^LICENSE\.md$
 ^logs$
+^inst/docs$

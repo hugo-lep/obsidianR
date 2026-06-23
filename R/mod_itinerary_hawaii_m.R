@@ -76,6 +76,17 @@ $(document).on('click', 'a.wikilink', function(e) {
   Shiny.setInputValue('", module_id, "-wikilink_clicked', stem, {priority: 'event'});
 });
 
+$(document).on('click', 'a.doc-link', function(e) {
+  e.preventDefault();
+  var file = $(this).attr('data-doc');
+  Shiny.setInputValue('", module_id, "-doc_clicked', file, {priority: 'event'});
+});
+
+/* Ouvre un PDF dans un nouvel onglet */
+Shiny.addCustomMessageHandler('it_open_url', function(msg) {
+  window.open(msg.url, '_blank');
+});
+
 /* Redéclenche le resize après l'animation du modal Bootstrap
    pour que leaflet recalcule ses dimensions */
 $(document).on('shown.bs.modal', function() {
@@ -131,6 +142,9 @@ mod_itinerary_m_ui <- function(id) {
           shiny::uiOutput(ns("tab_kauai_picker")),
           shiny::uiOutput(ns("tab_kauai_section"))
         )
+      ),
+      bslib::nav_panel(title = "\U0001f4c4 Documents", value = "docs",
+        shiny::div(class = "itm-body", shiny::uiOutput(ns("tab_docs")))
       )
     )
   )
@@ -155,7 +169,7 @@ mod_itinerary_m_server <- function(id, voyage_data) {
     img_prefix <- paste0("itm_img_", session$token)
     dir.create(img_dir, recursive = TRUE, showWarnings = FALSE)
     shiny::addResourcePath(img_prefix, img_dir)
-    app_base <- sub("/$", "", isolate(session$clientData$url_pathname))
+    app_base <- sub("/$", "", shiny::isolate(session$clientData$url_pathname))
 
     # ── Helper rendu d'onglet ─────────────────────────────────────────────────
     .render_tab <- function(tab_key) {
@@ -349,10 +363,48 @@ mod_itinerary_m_server <- function(id, voyage_data) {
         )
     })
 
+    # ── Documents PDF ─────────────────────────────────────────────────────────
+    doc_dir    <- file.path(tempdir(), session$token, "itm_docs")
+    doc_prefix <- paste0("itm_docs_", session$token)
+    dir.create(doc_dir, recursive = TRUE, showWarnings = FALSE)
+    shiny::addResourcePath(doc_prefix, doc_dir)
+
+    output$tab_docs <- shiny::renderUI({
+      items <- purrr::map(.docs_hawaii, function(d) {
+        shiny::div(
+          class = "d-flex justify-content-between align-items-center py-2 border-bottom",
+          shiny::span(d$label),
+          shiny::tags$a(
+            href = "#", class = "btn btn-sm btn-outline-primary doc-link",
+            `data-doc` = d$file,
+            shiny::icon("file-pdf"), " Voir"
+          )
+        )
+      })
+      shiny::tagList(shiny::h6("\U0001f4c4 Documents du voyage", class = "mb-3"), items)
+    })
+
+    shiny::observeEvent(input$doc_clicked, {
+      doc_file   <- input$doc_clicked
+      local_path <- file.path(doc_dir, doc_file)
+      if (!file.exists(local_path)) {
+        tryCatch(
+          s3db::s3download_HL(paste0("docs/hawaii/", doc_file), local_path, main_folder = FALSE),
+          error = function(e) message("⚠️  Document introuvable sur S3 : ", doc_file)
+        )
+      }
+      if (file.exists(local_path)) {
+        session$sendCustomMessage("it_open_url",
+          list(url = paste0(app_base, "/", doc_prefix, "/", doc_file)))
+      }
+    })
+
     # ── Nettoyage fin de session ──────────────────────────────────────────────
     session$onSessionEnded(function() {
       shiny::removeResourcePath(img_prefix)
       unlink(img_dir, recursive = TRUE)
+      shiny::removeResourcePath(doc_prefix)
+      unlink(doc_dir, recursive = TRUE)
     })
   })
 }
