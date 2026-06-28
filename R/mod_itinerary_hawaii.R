@@ -18,6 +18,19 @@
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
+# Retire la partie "|alias" d'un stem Obsidian ([[note|alias]] → "note")
+.stem_key <- function(x) sub("\\|.*$", "", x)
+
+# Journée réservée "Ne pas faire" — présente dans le Day Planner, absente des onglets île
+.dp_npf <- "⛔ Ne pas faire"
+
+# Garantit que la journée réservée existe (en dernier) dans le plan
+.dp_ensure_npf <- function(plan) {
+  if (!.dp_npf %in% names(plan$days))
+    plan$days[[.dp_npf]] <- character(0)
+  plan
+}
+
 #' Sauvegarde un plan île sur S3
 #' @noRd
 .dp_save <- function(ile, plan) {
@@ -63,32 +76,21 @@
 #' Rendre la liste d'items planifiés pour un onglet île
 #' @noRd
 .it_plan_items_ui <- function(ile, day, rv_plans, df) {
-  day_stems  <- rv_plans[[ile]]$days[[day]]  %||% character(0)
-  wide_stems <- rv_plans[[ile]]$island_wide  %||% character(0)
+  day_stems <- rv_plans[[ile]]$days[[day]] %||% character(0)
 
-  if (length(day_stems) == 0 && length(wide_stems) == 0) {
+  if (length(day_stems) == 0) {
     return(shiny::p("Aucun item planifié pour cette journée.", class = "text-muted"))
   }
 
   make_link <- function(stem) {
-    title <- if (!is.null(df) && stem %in% df$stem) df$title[df$stem == stem][[1]] else stem
+    key   <- .stem_key(stem)
+    title <- if (!is.null(df) && key %in% df$stem) df$title[df$stem == key][[1]] else key
     shiny::div(class = "py-1 border-bottom",
-      shiny::tags$a(href = "#", class = "wikilink", `data-wikilink` = stem, title)
+      shiny::tags$a(href = "#", class = "wikilink", `data-wikilink` = key, title)
     )
   }
 
-  items <- list()
-  if (length(wide_stems) > 0) {
-    items <- c(items,
-      list(shiny::p("\U0001f4cd Points fixes", class = "text-muted small mb-1 fw-semibold")),
-      lapply(wide_stems, make_link),
-      list(shiny::hr(class = "my-2"))
-    )
-  }
-  if (length(day_stems) > 0) {
-    items <- c(items, lapply(day_stems, make_link))
-  }
-  shiny::tagList(items)
+  shiny::tagList(lapply(day_stems, make_link))
 }
 
 #' Formater les titres de sections avec dates en "MM/JJ — titre"
@@ -455,6 +457,7 @@ mod_itinerary_server <- function(id, voyage_data) {
     # ── Résolution d'un wikilink cliqué ───────────────────────────────────────
     # Cherche d'abord dans les highlights, puis dans les itinéraires (liens croisés)
     .resolve <- function(stem) {
+      stem <- .stem_key(stem)
       # 1. Highlights géolocalisés
       all_hl <- dplyr::bind_rows(vd()$highlights)
       hl     <- dplyr::filter(all_hl, .data$stem == !!stem)
@@ -500,7 +503,7 @@ mod_itinerary_server <- function(id, voyage_data) {
       shiny::HTML(.it_render_body(split_oahu()$intro, img_dir, img_prefix, vd()$s3_attach_prefix, app_base))
     })
     output$tab_oahu_picker <- shiny::renderUI({
-      days <- names(rv_plans$oahu$days)
+      days <- setdiff(names(rv_plans$oahu$days), .dp_npf)
       shiny::req(length(days) > 0)
       choices <- stats::setNames(days, .it_date_heading(days))
       shiny::selectInput(ns("sel_oahu"), label = "Journée :", choices = choices, width = "100%")
@@ -517,7 +520,7 @@ mod_itinerary_server <- function(id, voyage_data) {
       shiny::HTML(.it_render_body(split_big()$intro, img_dir, img_prefix, vd()$s3_attach_prefix, app_base))
     })
     output$tab_bigisland_picker <- shiny::renderUI({
-      days <- names(rv_plans$bigisland$days)
+      days <- setdiff(names(rv_plans$bigisland$days), .dp_npf)
       shiny::req(length(days) > 0)
       choices <- stats::setNames(days, .it_date_heading(days))
       shiny::selectInput(ns("sel_bigisland"), label = "Journée :", choices = choices, width = "100%")
@@ -534,7 +537,7 @@ mod_itinerary_server <- function(id, voyage_data) {
       shiny::HTML(.it_render_body(split_kauai()$intro, img_dir, img_prefix, vd()$s3_attach_prefix, app_base))
     })
     output$tab_kauai_picker <- shiny::renderUI({
-      days <- names(rv_plans$kauai$days)
+      days <- setdiff(names(rv_plans$kauai$days), .dp_npf)
       shiny::req(length(days) > 0)
       choices <- stats::setNames(days, .it_date_heading(days))
       shiny::selectInput(ns("sel_kauai"), label = "Journée :", choices = choices, width = "100%")
@@ -545,7 +548,18 @@ mod_itinerary_server <- function(id, voyage_data) {
     })
 
     # ── État ───────────────────────────────────────────────────────────────────
-    rv <- shiny::reactiveValues(selected_stem = NULL, map_expanded = FALSE)
+    rv <- shiny::reactiveValues(selected_stem = NULL, map_expanded = FALSE, hl_result = NULL)
+
+    output$hl_title <- shiny::renderUI({
+      res <- rv$hl_result
+      if (is.null(res)) return(NULL)
+      shiny::p(res$title, class = "text-muted small mb-0 mt-0 text-truncate")
+    })
+    output$hl_content <- shiny::renderUI({
+      res <- rv$hl_result
+      if (is.null(res)) return(NULL)
+      shiny::HTML(res$html)
+    })
 
     # ── Carte de base ──────────────────────────────────────────────────────────
     output$hl_map <- leaflet::renderLeaflet({
@@ -572,7 +586,7 @@ mod_itinerary_server <- function(id, voyage_data) {
           is_aeroport = .it_is_aeroport(.data$stem)
         )
 
-        day_stems <- rv_plans[[ile]]$days[[day]] %||% character(0)
+        day_stems <- .stem_key(rv_plans[[ile]]$days[[day]] %||% character(0))
 
         df_show <- df |>
           dplyr::filter(.data$stem %in% c(sel, day_stems) | is_hotel | is_aeroport) |>
@@ -605,10 +619,7 @@ mod_itinerary_server <- function(id, voyage_data) {
         is_aeroport = .it_is_aeroport(.data$stem)
       )
 
-      day_stems <- c(
-        if (!is.null(sel_day)) rv_plans[[ile]]$days[[sel_day]] %||% character(0) else character(0),
-        rv_plans[[ile]]$island_wide %||% character(0)
-      )
+      day_stems <- .stem_key(if (!is.null(sel_day)) rv_plans[[ile]]$days[[sel_day]] %||% character(0) else character(0))
 
       df_show <- df |>
         dplyr::filter(.data$stem %in% c(sel, day_stems) | is_hotel | is_aeroport) |>
@@ -622,23 +633,17 @@ mod_itinerary_server <- function(id, voyage_data) {
       .it_map_update(leaflet::leafletProxy(ns("hl_map"), session), df_show)
     })
 
-    # Titre initial : vide (aucun highlight sélectionné)
-    output$hl_title <- shiny::renderUI(NULL)
-
     # Changement d'onglet -> reinitialiser la selection
     shiny::observeEvent(input$tabs, {
       rv$selected_stem <- NULL
+      rv$hl_result     <- NULL
       session$sendCustomMessage("it_sidebar_close", list(id = ns("it_layout")))
     }, ignoreInit = TRUE)
 
     # -- Clic wikilink --
     shiny::observeEvent(input$wikilink_clicked, {
       rv$selected_stem <- input$wikilink_clicked
-      result <- .resolve(input$wikilink_clicked)
-      output$hl_title   <- shiny::renderUI(
-        shiny::p(result$title, class = "text-muted small mb-0 mt-0 text-truncate")
-      )
-      output$hl_content <- shiny::renderUI(shiny::HTML(result$html))
+      rv$hl_result     <- .resolve(input$wikilink_clicked)
       session$sendCustomMessage("it_sidebar_open", list(id = ns("it_layout")))
     })
 
@@ -657,9 +662,9 @@ mod_itinerary_server <- function(id, voyage_data) {
     # ── Day Planner ───────────────────────────────────────────────────────────
 
     rv_plans <- shiny::reactiveValues(
-      oahu      = s3db::s3readRDS_HL("obsidianr/plan_oahu.rds"),
-      bigisland = s3db::s3readRDS_HL("obsidianr/plan_bigisland.rds"),
-      kauai     = s3db::s3readRDS_HL("obsidianr/plan_kauai.rds")
+      oahu      = .dp_ensure_npf(s3db::s3readRDS_HL("obsidianr/plan_oahu.rds")),
+      bigisland = .dp_ensure_npf(s3db::s3readRDS_HL("obsidianr/plan_bigisland.rds")),
+      kauai     = .dp_ensure_npf(s3db::s3readRDS_HL("obsidianr/plan_kauai.rds"))
     )
 
     dp_ile <- shiny::reactive(input$dp_island %||% "oahu")
@@ -679,7 +684,6 @@ mod_itinerary_server <- function(id, voyage_data) {
           )
         ),
         shiny::uiOutput(ns("dp_day_row")),
-        shiny::uiOutput(ns("dp_island_wide_ui")),
         shiny::hr(class = "my-2"),
         shiny::uiOutput(ns("dp_table"))
       )
@@ -688,22 +692,23 @@ mod_itinerary_server <- function(id, voyage_data) {
     output$dp_day_row <- shiny::renderUI({
       days <- dp_day_names()
       if (length(days) == 0) return(shiny::p("Aucune journée.", class = "text-muted"))
-      current  <- shiny::isolate(input$dp_day)
-      selected <- if (!is.null(current) && current %in% days) current else days[[1]]
+      current    <- shiny::isolate(input$dp_day)
+      selected   <- if (!is.null(current) && current %in% days) current else days[[1]]
+      is_special <- isTRUE(selected == .dp_npf)
       shiny::div(class = "d-flex gap-1 align-items-end mb-2",
         shiny::div(style = "flex:1;",
           shiny::selectInput(ns("dp_day"), "Journée :", choices = days,
                              selected = selected, width = "100%")
         ),
-        shiny::actionButton(ns("dp_day_up"),     shiny::icon("arrow-up"),
+        if (!is_special) shiny::actionButton(ns("dp_day_up"),     shiny::icon("arrow-up"),
                             class = "btn-sm btn-outline-secondary", title = "Monter"),
-        shiny::actionButton(ns("dp_day_down"),   shiny::icon("arrow-down"),
+        if (!is_special) shiny::actionButton(ns("dp_day_down"),   shiny::icon("arrow-down"),
                             class = "btn-sm btn-outline-secondary", title = "Descendre"),
-        shiny::actionButton(ns("dp_day_rename"), shiny::icon("pencil"),
+        if (!is_special) shiny::actionButton(ns("dp_day_rename"), shiny::icon("pencil"),
                             class = "btn-sm btn-outline-secondary", title = "Renommer"),
-        shiny::actionButton(ns("dp_day_add"),    shiny::icon("plus"),
+        if (!is_special) shiny::actionButton(ns("dp_day_add"),    shiny::icon("plus"),
                             class = "btn-sm btn-outline-success",   title = "Ajouter"),
-        shiny::actionButton(ns("dp_day_delete"), shiny::icon("trash"),
+        if (!is_special) shiny::actionButton(ns("dp_day_delete"), shiny::icon("trash"),
                             class = "btn-sm btn-outline-danger",    title = "Supprimer")
       )
     })
@@ -803,32 +808,6 @@ mod_itinerary_server <- function(id, voyage_data) {
       .dp_save(ile, rv_plans[[ile]])
     })
 
-    output$dp_island_wide_ui <- shiny::renderUI({
-      ile <- dp_ile()
-      df  <- vd()$highlights[[ile]]
-      shiny::req(!is.null(df) && nrow(df) > 0)
-      df <- dplyr::mutate(df,
-        is_hotel    = purrr::map_lgl(tags, .it_is_hebergement),
-        is_aeroport = .it_is_aeroport(.data$stem)
-      )
-      fixed <- dplyr::filter(df, is_hotel | is_aeroport)
-      if (nrow(fixed) == 0) return(NULL)
-      shiny::tagList(
-        shiny::h6("\U0001f4cd Points fixes de l'île", class = "mt-2 mb-1"),
-        shiny::checkboxGroupInput(ns("dp_island_wide"), NULL,
-          choiceNames  = as.list(fixed$title),
-          choiceValues = as.list(fixed$stem),
-          selected     = rv_plans[[ile]]$island_wide
-        )
-      )
-    })
-
-    shiny::observeEvent(input$dp_island_wide, {
-      ile <- dp_ile()
-      rv_plans[[ile]]$island_wide <- input$dp_island_wide %||% character(0)
-      .dp_save(ile, rv_plans[[ile]])
-    }, ignoreNULL = FALSE, ignoreInit = TRUE)
-
     output$dp_table <- shiny::renderUI({
       ile  <- dp_ile()
       day  <- shiny::req(input$dp_day)
@@ -836,10 +815,9 @@ mod_itinerary_server <- function(id, voyage_data) {
       plan <- dp_plan()
       shiny::req(!is.null(df) && nrow(df) > 0)
 
-      other_stems   <- unlist(plan$days[names(plan$days) != day], use.names = FALSE)
-      current_stems <- plan$days[[day]] %||% character(0)
+      other_stems   <- .stem_key(unlist(plan$days[names(plan$days) != day], use.names = FALSE))
+      current_stems <- .stem_key(plan$days[[day]] %||% character(0))
       fixed_stems   <- unique(c(
-        plan$island_wide,
         df$stem[purrr::map_lgl(df$tags, .it_is_hebergement)],
         df$stem[.it_is_aeroport(df$stem)]
       ))
@@ -858,8 +836,9 @@ mod_itinerary_server <- function(id, voyage_data) {
         shiny::tags$a(href = "#", class = "wikilink", `data-wikilink` = s, df_avail$title[i])
       })
 
+      label <- if (isTRUE(day == .dp_npf)) "\U26d4 À ne pas faire" else "\U0001f5fa️ Highlights disponibles"
       shiny::tagList(
-        shiny::h6("\U0001f5fa️ Highlights disponibles", class = "mb-1"),
+        shiny::h6(label, class = "mb-1"),
         shiny::checkboxGroupInput(ns("dp_selected"), NULL,
           choiceNames  = choice_names,
           choiceValues = df_avail$stem,
